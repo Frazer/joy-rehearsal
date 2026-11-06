@@ -1,0 +1,1450 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Joy Rehearsal</title>
+<!--
+  The Joy Rehearsal: a short animated film about mental rehearsal, starring a Mind Blob.
+  One sad blob rehearses walking into a room until the walk feels familiar, then does it for real,
+  and the joy spreads blob to blob. Ends with a guided 30-second rehearsal the viewer can try.
+
+  Blob shapes and colours match the game (src/render/textures.ts, art/cover.html).
+  Canvas draws the world; the DOM layer carries the kinetic text (morphs, scrambles, word reveals).
+  Self-contained: open the file directly, or publish it as an Artifact.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@300..700&family=Shantell+Sans:wght@400;600&display=swap">
+<style>
+  /* Layout: one full-bleed stage. Canvas world underneath, kinetic type floating over it,
+     narration in a lower third, controls tucked bottom-right. The look runs night-blue to meadow-gold
+     as the story turns, so it is one deliberate cinematic world rather than a light/dark pair. */
+  :root {
+    --ink: #3b2633;
+    --paper: #fffcf7;
+    --night: #1c2036;
+    --gold: #ffd34d;
+    --sun: #ffd34d;
+    --mind: #8fe9ff;
+    --rose: #ff6f91;
+    --text: #ecebf6;
+    --halo: rgba(20, 22, 44, 0.75);
+    --thought: #a9b1cf;
+    --display: 'Fredoka', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
+    --hand: 'Shantell Sans', 'Comic Neue', 'Chalkboard SE', ui-rounded, cursive;
+    color-scheme: dark;
+  }
+
+  html, body { height: 100%; margin: 0; overflow: hidden; background: var(--night); }
+  [hidden] { display: none !important; }
+
+  #stage {
+    position: fixed; inset: 0; overflow: hidden;
+    font-family: var(--display); color: var(--text);
+    -webkit-user-select: none; user-select: none;
+    transition: color 0.9s ease;
+  }
+  #cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #layer { position: absolute; inset: 0; pointer-events: none; }
+
+  /* Anything placed by fractional stage coordinates. */
+  .pos { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); white-space: nowrap; will-change: transform; }
+  .line { display: inline-block; white-space: nowrap; }
+  .ch { display: inline-block; white-space: pre; will-change: transform, opacity; }
+
+  .thought {
+    font-family: var(--hand); font-weight: 400;
+    font-size: clamp(15px, 2.3vw, 25px);
+    color: var(--thought);
+    text-shadow: 0 1px 10px var(--halo);
+    transition: color 1.2s ease;
+  }
+  .thought.warm { color: var(--gold); }
+
+  .big {
+    font-weight: 700; letter-spacing: 0.02em;
+    font-size: clamp(30px, 8.4vw, 104px);
+    text-shadow: 0 2px 24px var(--halo);
+  }
+  .big .ch.lit { color: var(--gold); }
+
+  .title { font-weight: 600; font-size: clamp(30px, 8.6vw, 112px); letter-spacing: 0.01em; text-shadow: 0 2px 30px var(--halo); }
+  .subtitle {
+    font-weight: 300; font-size: clamp(13px, 2vw, 20px); letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.8;
+    white-space: normal; text-align: center; width: min(calc(100vw - 32px), 34em); text-wrap: balance;
+  }
+
+  .bubble {
+    font-family: var(--hand); font-weight: 600;
+    font-size: clamp(14px, 2vw, 22px);
+    color: var(--ink); background: var(--paper);
+    padding: 0.28em 0.75em 0.34em; border-radius: 1.1em;
+    border: 2px solid var(--ink);
+    box-shadow: 0 4px 14px rgba(59, 38, 51, 0.22);
+  }
+  .bubble::after {
+    content: ""; position: absolute; left: 50%; bottom: -9px; width: 12px; height: 12px;
+    background: var(--paper); border-right: 2px solid var(--ink); border-bottom: 2px solid var(--ink);
+    transform: translateX(-50%) rotate(45deg);
+  }
+  .bubble.ghost { background: rgba(143, 233, 255, 0.14); color: var(--mind); border-color: var(--mind); border-style: dashed; box-shadow: none; }
+  .bubble.ghost::after { background: transparent; border-color: var(--mind); border-style: dashed; }
+
+  .situation {
+    text-align: center; white-space: normal; width: min(calc(100vw - 32px), 20em); text-wrap: balance;
+    font-size: clamp(22px, 4.4vw, 50px); font-weight: 500; line-height: 1.15;
+    text-shadow: 0 2px 20px var(--halo);
+  }
+  .situation .slot { display: block; font-weight: 700; color: var(--rose); min-height: 1.15em; }
+
+  #caption {
+    position: absolute; left: 0; right: 0; margin: 0 auto;
+    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+    max-width: 30ch; padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
+    text-align: center; text-wrap: balance;
+    font-size: clamp(18px, 2.7vw, 30px); font-weight: 400; line-height: 1.32;
+    text-shadow: 0 1px 14px var(--halo);
+    pointer-events: none;
+  }
+  #caption .w { display: inline-block; white-space: pre; }
+
+  .hud {
+    position: absolute; top: calc(16px + env(safe-area-inset-top, 0px));
+    font-size: 13px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase;
+    display: flex; align-items: baseline; gap: 0.6em;
+    font-variant-numeric: tabular-nums;
+  }
+  #rehearsal-tag { left: calc(18px + env(safe-area-inset-left, 0px)); color: var(--mind); }
+  #rehearsal-tag b { font-size: 26px; letter-spacing: 0.02em; font-weight: 600; }
+  #smile-tag { right: calc(18px + env(safe-area-inset-right, 0px)); }
+  #smile-tag b { font-size: 26px; letter-spacing: 0.02em; font-weight: 600; color: var(--rose); }
+
+  /* Controls: paper pills, readable over night and meadow alike. */
+  .pill {
+    font: inherit; font-size: 15px; font-weight: 500;
+    color: var(--ink); background: rgba(255, 252, 247, 0.9);
+    border: 0; border-radius: 999px; padding: 9px 15px;
+    display: inline-flex; align-items: center; gap: 7px;
+    cursor: pointer; box-shadow: 0 3px 12px rgba(20, 16, 30, 0.25);
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .pill:hover { background: var(--paper); transform: translateY(-1px); }
+  .pill:active { transform: translateY(1px); }
+  .pill:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  .pill svg { width: 16px; height: 16px; flex: none; }
+  .pill.primary { background: var(--sun); }
+  .pill.icon { padding: 9px; }
+  .pill[aria-pressed="true"] { background: var(--sun); }
+  .chip[aria-checked="true"] { background: var(--sun); }
+
+  #controls {
+    position: absolute; right: calc(14px + env(safe-area-inset-right, 0px));
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    display: flex; gap: 8px; z-index: 5;
+  }
+  #progress {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+    background: rgba(255, 255, 255, 0.12); z-index: 4;
+  }
+  #progress i { display: block; height: 100%; width: 0; background: var(--gold); }
+
+  .panel {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    width: min(560px, calc(100% - 32px));
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    text-align: center; z-index: 6;
+  }
+  .row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .panel .note { font-size: clamp(15px, 2vw, 18px); margin: 0; text-shadow: 0 1px 12px var(--halo); text-wrap: balance; }
+  .chip { font-size: 14px; padding: 7px 13px; }
+  .chip[aria-checked="true"] { box-shadow: 0 0 0 2px var(--ink) inset, 0 3px 12px rgba(20,16,30,.25); }
+
+  #guide { top: calc(22px + env(safe-area-inset-top, 0px)); bottom: auto; }
+  #steps { display: flex; gap: 6px; }
+  .big2 { font-weight: 500; font-size: clamp(20px, 4vw, 40px); text-shadow: 0 2px 18px var(--halo); }
+  #steps i { width: 26px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.25); transition: background 0.4s; }
+  #steps i.on { background: var(--gold); }
+
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @media (max-width: 520px) {
+    #controls .pill .lbl { display: none; }
+    #controls .pill { padding: 10px; }
+    #caption { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+  }
+</style>
+
+<main id="stage" aria-label="The Joy Rehearsal, an animated short about mental rehearsal">
+  <canvas id="cv" aria-hidden="true"></canvas>
+  <div id="layer" aria-hidden="true"></div>
+
+  <div id="rehearsal-tag" class="hud" hidden><span>Rehearsal</span><b id="rep-count">1</b></div>
+  <div id="smile-tag" class="hud" hidden><span>Smiles</span><b id="smile-count">1</b></div>
+
+  <p id="caption" aria-live="polite"></p>
+  <p id="sr" class="sr" aria-live="polite"></p>
+
+  <div id="end" class="panel" hidden>
+    <div class="row">
+      <button id="try" class="pill primary" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8" cy="8" r="2.2" fill="currentColor"/></svg>
+        Try a guided rehearsal
+      </button>
+      <button id="again" class="pill" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.6-3.7M3 2.5v2.6h2.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Watch again
+      </button>
+    </div>
+  </div>
+
+  <div id="pick" class="panel" hidden>
+    <p class="note">Pick a moment you want to feel at ease in.</p>
+    <div class="row" role="radiogroup" aria-label="Situation" id="chips"></div>
+    <button id="begin" class="pill primary" type="button">Begin rehearsal</button>
+  </div>
+
+  <div id="guide" class="panel" hidden>
+    <div id="steps" aria-hidden="true"></div>
+  </div>
+
+  <nav id="controls" aria-label="Playback">
+    <button id="pause" class="pill" type="button" aria-label="Pause">
+      <svg viewBox="0 0 16 16" aria-hidden="true" id="pause-ico"><path d="M5 3v10M11 3v10" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+      <span class="lbl" id="pause-lbl">Pause</span>
+    </button>
+    <button id="restart" class="pill" type="button" aria-label="Restart">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.6-3.7M3 2.5v2.6h2.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="lbl">Restart</span>
+    </button>
+    <button id="sound" class="pill" type="button" aria-pressed="false" aria-label="Sound">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6h2.5l3.5-3v10l-3.5-3H2.5z" fill="currentColor"/><path id="wave" d="M11 5.5c1.2 1.4 1.2 3.6 0 5M12.8 3.8c2.1 2.4 2.1 6 0 8.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.3"/></svg>
+      <span class="lbl" id="sound-lbl">Sound off</span>
+    </button>
+  </nav>
+  <div id="progress" aria-hidden="true"><i></i></div>
+</main>
+
+<script>
+'use strict';
+
+// ═══════════════════ engine: clock, waits, tweens, tickers ═══════════════════
+
+const $ = (id) => document.getElementById(id);
+const stage = $('stage'), cv = $('cv'), ctx = cv.getContext('2d'), layer = $('layer');
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** Preview speed for checking the film quickly (?speed=4). Ignored when the page has no query, as in an Artifact. */
+const SPEED = clamp0(+new URLSearchParams(location.search).get('speed') || 1);
+function clamp0(v) { return Math.max(0.25, Math.min(8, v)); }
+
+/** Story time. It only moves while playing, so pausing freezes every wait, tween and ticker together. */
+const clock = { t: 0, paused: false, last: performance.now() };
+let runId = 0;
+const ABORT = Symbol('abort');
+const waiters = [];
+const tweens = [];
+const tickers = new Set();
+
+function wait(ms) {
+  const run = runId;
+  return new Promise((res, rej) => waiters.push({ at: clock.t + ms, res, rej, run }));
+}
+
+const E = {
+  linear: (p) => p,
+  in: (p) => p * p * p,
+  out: (p) => 1 - (1 - p) ** 3,
+  inOut: (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2),
+  back: (p) => 1 + 2.4 * (p - 1) ** 3 + 1.4 * (p - 1) ** 2,
+  sine: (p) => 0.5 - Math.cos(p * Math.PI) / 2,
+};
+
+function tween(obj, to, dur, ease = E.inOut) {
+  const from = {};
+  for (const k in to) from[k] = obj[k];
+  const run = runId;
+  return new Promise((res, rej) => tweens.push({ obj, from, to, t0: clock.t, dur: Math.max(1, dur), ease, res, rej, run }));
+}
+
+/** Run a per-frame function on story time until it returns true. */
+function tick(fn) {
+  return new Promise((res, rej) => {
+    const t0 = clock.t;
+    const tk = { fn: (t) => fn(t - t0), res, rej };
+    tickers.add(tk);
+  });
+}
+
+/** Start a side task that must not leak an unhandled ABORT when the story restarts. */
+function fork(fn) {
+  fn().catch((e) => { if (e !== ABORT) console.error(e); });
+}
+
+function stepEngine() {
+  for (let i = waiters.length - 1; i >= 0; i--) {
+    const w = waiters[i];
+    if (clock.t >= w.at) { waiters.splice(i, 1); w.res(); }
+  }
+  for (let i = tweens.length - 1; i >= 0; i--) {
+    const tw = tweens[i];
+    const p = Math.min(1, (clock.t - tw.t0) / tw.dur), e = tw.ease(p);
+    for (const k in tw.to) tw.obj[k] = tw.from[k] + (tw.to[k] - tw.from[k]) * e;
+    if (p >= 1) { tweens.splice(i, 1); tw.res(); }
+  }
+  for (const tk of tickers) if (tk.fn(clock.t)) { tickers.delete(tk); tk.res(); }
+  stepScrub();
+}
+
+/** Restart: drop every pending wait, tween and ticker. The old script's awaits never resolve, so it simply stops. */
+function abortAll() {
+  runId++;
+  waiters.length = 0;
+  tweens.length = 0;
+  tickers.clear();
+  scrubbed.clear();
+  stage.getAnimations({ subtree: true }).forEach((a) => a.cancel());
+  layer.replaceChildren();
+}
+
+function setPaused(p) {
+  clock.paused = p;
+  $('pause-lbl').textContent = p ? 'Play' : 'Pause';
+  $('pause').setAttribute('aria-label', p ? 'Play' : 'Pause');
+  $('pause-ico').innerHTML = p
+    ? '<path d="M5 3l8 5-8 5z" fill="currentColor"/>'
+    : '<path d="M5 3v10M11 3v10" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>';
+}
+
+/**
+ * Web Animations, scrubbed by the story clock rather than wall time, so text and canvas never drift apart
+ * (pausing, a throttled background tab, ?speed all just work). Resolves when the animation ends.
+ */
+const scrubbed = new Set();
+function anim(el, frames, opts) {
+  const a = el.animate(frames, { fill: 'both', easing: 'cubic-bezier(.2,.7,.2,1)', ...opts });
+  a.pause();
+  a.currentTime = 0;
+  const end = (opts.delay || 0) + opts.duration;
+  return new Promise((res) => scrubbed.add({ a, t0: clock.t, end, res }));
+}
+function stepScrub() {
+  for (const s of scrubbed) {
+    const t = Math.min(s.end, clock.t - s.t0);
+    s.a.currentTime = t;
+    if (t >= s.end) { scrubbed.delete(s); s.res(); }
+  }
+}
+
+// ═══════════════════ small utilities ═══════════════════
+
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const mixC = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+const rgba = (c, a = 1, k = 1) => `rgba(${Math.round(c[0] * k)},${Math.round(c[1] * k)},${Math.round(c[2] * k)},${a})`;
+const rng = (seed) => () => {
+  seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const R = rng(20261105);
+
+const C = {
+  ink: [59, 38, 51],
+  sad: [128, 140, 172],
+  grey: [184, 178, 200],
+  blue: [79, 168, 255],
+  pink: [255, 126, 182],
+  orange: [255, 164, 58],
+  green: [96, 204, 126],
+  yellow: [255, 211, 77],
+  purple: [167, 139, 250],
+  mind: [143, 233, 255],
+};
+const JOY = [C.pink, C.orange, C.green, C.yellow, C.purple, C.blue];
+
+// ═══════════════════ sound: soft pentatonic chimes, off until asked ═══════════════════
+
+const audio = {
+  ac: null, out: null, on: false,
+  enable() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    if (!this.ac) {
+      const ac = (this.ac = new AC());
+      this.out = ac.createGain();
+      this.out.gain.value = 0.55;
+      const delay = ac.createDelay(1), fb = ac.createGain(), wet = ac.createGain();
+      delay.delayTime.value = 0.27; fb.gain.value = 0.34; wet.gain.value = 0.3;
+      this.out.connect(ac.destination);
+      this.out.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(ac.destination);
+    }
+    this.ac.resume();
+    this.on = true;
+    return true;
+  },
+  note(freq, { at = 0, dur = 1.4, vol = 0.1, type = 'sine' } = {}) {
+    if (!this.on || !this.ac || clock.paused) return;
+    const ac = this.ac, t0 = ac.currentTime + at;
+    for (const [mult, v] of [[1, vol], [2, vol * 0.18]]) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.value = freq * mult;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(v, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.out); o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+  },
+  /** Major pentatonic step from D4: always consonant, however many fire at once. */
+  chime(step, opts) {
+    const sc = [0, 2, 4, 7, 9], o = Math.floor(step / 5), i = ((step % 5) + 5) % 5;
+    this.note(293.66 * 2 ** ((sc[i] + 12 * o) / 12), opts);
+  },
+  sigh() {
+    [220, 261.63, 329.63].forEach((f, i) => this.note(f / 2, { at: i * 0.5, dur: 3.2, vol: 0.06, type: 'triangle' }));
+  },
+  bloom() {
+    [0, 2, 4, 5, 7, 9].forEach((s, i) => this.chime(s, { at: i * 0.12, dur: 2.6, vol: 0.07 }));
+  },
+};
+
+// ═══════════════════ world: view, blobs, particles, effects ═══════════════════
+
+/** k is the scene unit: blob sizes and offsets are written in k so the film scales from phone to desktop. */
+const view = { w: 1, h: 1, dpr: 1, k: 1 };
+const sx = (fx, ox = 0) => fx * view.w + ox * view.k;
+const sy = (fy, oy = 0) => fy * view.h + oy * view.k;
+
+const world = {
+  m: 0,          // 0 = night and sadness, 1 = meadow and joy
+  mind: 0,       // rehearsal overlay
+  rain: 0, motes: 0,
+  spot: 0,       // cold spotlight on the lonely hero
+  path: 0,       // strength of the rehearsed path, 0..1
+  pathGold: 0,   // path turns from imagined (cyan) to walked (gold)
+  pathShow: 0,
+  breath: 0,     // guided mode breathing ring, 0..1 radius
+  breathA: 0,
+  blobs: [], rings: [], hearts: [], sparks: [],
+};
+
+function makeBlob(o) {
+  const col = o.col || C.grey;
+  return {
+    fx: 0.5, fy: 0.6, ox: 0, oy: 0, s: 1.6,
+    from: col, to: col, cm: 1,
+    mood: 'flat', look: [0, 0], hop: 0, sq: 0, closed: 0, sadBrows: 0, blush: 0,
+    alpha: 1, ghost: false, conf: 0, flower: false, wave: 0,
+    nb: clock.t + 500 + R() * 3000, blinkUntil: 0, ph: R() * 6.28,
+    ...o,
+  };
+}
+const bx = (b) => sx(b.fx, b.ox);
+const by = (b) => sy(b.fy, b.oy);
+const colOf = (b) => (b.cm >= 1 ? b.to : mixC(b.from, b.to, b.cm));
+
+/** Change colour smoothly from whatever it shows now. */
+function recolor(b, to, dur = 900) {
+  b.from = colOf(b); b.to = to; b.cm = 0;
+  return tween(b, { cm: 1 }, dur, E.out);
+}
+
+/** Mood switch with a little squash, like the game's blobs. */
+function setMood(b, mood) {
+  if (b.mood === mood) return;
+  b.mood = mood;
+  fork(async () => { await tween(b, { sq: -0.08 }, 90, E.out); await tween(b, { sq: 0 }, 260, E.back); });
+}
+
+const HEART = new Path2D('M0 9 C-6 4.5 -11 0.5 -11 -4.5 C-11 -8.5 -8 -11 -5 -11 C-2.6 -11 -0.8 -9.6 0 -7.6 C0.8 -9.6 2.6 -11 5 -11 C8 -11 11 -8.5 11 -4.5 C11 0.5 6 4.5 0 9 Z');
+const SPARKLE = new Path2D('M0 -10 Q1.6 -1.6 10 0 Q1.6 1.6 0 10 Q-1.6 1.6 -10 0 Q-1.6 -1.6 0 -10 Z');
+
+function burst(b, col, n = 5) {
+  const x = bx(b), y = by(b) - 10 * b.s * view.k;
+  world.rings.push({ x, y, r: 10 * view.k, max: 120 * b.s * view.k * 0.6, col, life: 1 });
+  for (let i = 0; i < n; i++) {
+    world.hearts.push({ x: x + (R() - 0.5) * 30 * view.k, y, vx: (R() - 0.5) * 0.09, vy: -0.08 - R() * 0.07, s: (0.9 + R() * 0.8) * view.k * 1.2, rot: (R() - 0.5) * 0.6, life: 1 });
+  }
+  for (let i = 0; i < n * 2; i++) {
+    const a = R() * 6.28, v = 0.06 + R() * 0.12;
+    world.sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 0.04, col: R() < 0.5 ? C.yellow : col, life: 1, s: (0.5 + R() * 0.6) * view.k });
+  }
+}
+
+function sparkleAt(x, y, n = 10, col = C.yellow) {
+  for (let i = 0; i < n; i++) {
+    const a = R() * 6.28, v = 0.03 + R() * 0.09;
+    world.sparks.push({ x: x + (R() - 0.5) * 40, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 0.05, col, life: 1, s: (0.4 + R() * 0.7) * view.k });
+  }
+}
+
+// Ambient particles live in fractions of the screen so a resize never strands them.
+const rain = Array.from({ length: REDUCED ? 50 : 150 }, () => ({ x: R(), y: R(), l: 0.02 + R() * 0.03, v: 0.0006 + R() * 0.0005 }));
+const motes = Array.from({ length: REDUCED ? 24 : 70 }, () => ({ x: R(), y: R(), v: 0.00005 + R() * 0.00008, s: 0.5 + R() * 0.9, ph: R() * 6.28, c: JOY[(R() * JOY.length) | 0] }));
+const meadow = Array.from({ length: 110 }, () => ({ x: R(), y: 0.5 + R() * 0.5, k: R(), c: ['#ffffff', '#ffe27a', '#ffb3d1', '#c8b6ff'][(R() * 4) | 0] }));
+
+function stepWorld(dt) {
+  const t = clock.t;
+  for (const b of world.blobs) {
+    if (t > b.nb) { b.blinkUntil = t + 130; b.nb = t + 2200 + R() * 3600; }
+  }
+  if (!REDUCED || world.rain > 0) for (const d of rain) { d.y += d.v * dt; d.x -= d.v * dt * 0.18; if (d.y > 1.05) { d.y = -0.05; d.x = R() * 1.2; } }
+  for (const p of motes) { p.y -= p.v * dt; if (p.y < -0.05) { p.y = 1.05; p.x = R(); } }
+  const fade = (arr, rate) => { for (let i = arr.length - 1; i >= 0; i--) { arr[i].life -= rate * dt; if (arr[i].life <= 0) arr.splice(i, 1); } };
+  for (const r of world.rings) r.r = lerp(r.r, r.max, 0.004 * dt);
+  for (const h of world.hearts) { h.x += h.vx * dt; h.y += h.vy * dt; h.vy *= 0.995; }
+  for (const s of world.sparks) { s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= 0.985; s.vy = s.vy * 0.985 + 0.00004 * dt; }
+  fade(world.rings, 0.0011); fade(world.hearts, 0.0007); fade(world.sparks, 0.0012);
+}
+
+// ─── the rehearsed path: a gentle arc from the hero to the group ───
+
+const scene = { hero: null, group: [], crowd: [] };
+
+function pathEnds() {
+  const h = scene.hero, g = scene.group[0];
+  if (!h || !g) return null;
+  const x0 = sx(0.2, 55), y0 = sy(0.62, 22), x2 = sx(0.74, -165), y2 = sy(0.62, 22);
+  return { x0, y0, x1: (x0 + x2) / 2, y1: Math.min(y0, y2) - Math.max(60 * view.k, view.h * 0.12), x2, y2 };
+}
+function pathAt(p) {
+  const e = pathEnds();
+  const u = 1 - p;
+  return { x: u * u * e.x0 + 2 * u * p * e.x1 + p * p * e.x2, y: u * u * e.y0 + 2 * u * p * e.y1 + p * p * e.y2 };
+}
+
+// ═══════════════════ drawing ═══════════════════
+
+function ell(x, y, rx, ry, rot = 0) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2); }
+const INK = 'rgb(59,38,51)';
+
+function drawMouth(mood) {
+  ctx.lineWidth = 2.8; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = INK;
+  ctx.beginPath();
+  if (mood === 'grin') {
+    ctx.arc(0, 4.76, 8, 0.1 * Math.PI, 0.9 * Math.PI); ctx.closePath();
+    ctx.fillStyle = '#8a2a45'; ctx.fill(); ctx.stroke();
+  } else if (mood === 'smile') { ctx.arc(0, 4.45, 7, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke(); }
+  else if (mood === 'frown') { ctx.arc(0, 15.56, 7, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke(); }
+  else if (mood === 'ohh') { ell(0, 10, 3.6, 4.4); ctx.fillStyle = INK; ctx.fill(); }
+  else { ctx.moveTo(-5, 10); ctx.lineTo(5, 10); ctx.stroke(); }
+}
+
+function drawBlob(b) {
+  if (b.alpha <= 0.01) return;
+  const t = clock.t, col = colOf(b);
+  ctx.save();
+  ctx.translate(bx(b), by(b));
+  ctx.scale(b.s * view.k, b.s * view.k);
+  ctx.globalAlpha = b.alpha;
+  const breathe = Math.sin(t / 700 + b.ph) * 0.012;
+  const st = b.sq + breathe;
+  if (!b.ghost) {
+    const k = Math.max(0.55, 1 - b.hop / 40);
+    ell(0, 29, 30 * k, 9 * k); ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fill();
+  }
+  ctx.translate(0, 29 - b.hop); ctx.scale(1 - st, 1 + st); ctx.translate(0, -29);
+  if (b.wave) ctx.rotate(Math.sin(t / 110) * 0.08 * b.wave);
+
+  if (b.ghost) {
+    ctx.save();
+    ctx.shadowColor = rgba(C.mind, 0.9); ctx.shadowBlur = 22;
+    ell(0, 0, 32, 29); ctx.fillStyle = rgba(C.mind, 0.1 + 0.22 * b.conf); ctx.fill();
+    ctx.setLineDash([7, 6]); ctx.lineDashOffset = -t / 40;
+    ctx.lineWidth = 3; ctx.strokeStyle = rgba(C.mind, 0.95); ctx.stroke();
+    ctx.restore();
+  } else {
+    ell(0, 0, 32, 29); ctx.fillStyle = rgba(col); ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = rgba(col, 1, 0.6); ctx.stroke();
+    ell(0, 11, 24, 14); ctx.fillStyle = rgba(col, 0.9, 0.886); ctx.fill();
+    ell(-13, -15, 9, 5.5, -0.5); ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
+  }
+  if (b.blush > 0) {
+    ctx.fillStyle = `rgba(255,111,145,${0.45 * b.blush})`;
+    ell(-17, 5, 5, 3); ctx.fill(); ell(17, 5, 5, 3); ctx.fill();
+  }
+
+  // Eyes: open, blinking, or softly closed (rehearsing).
+  const blinking = t < b.blinkUntil;
+  const shut = Math.max(b.closed, blinking ? 1 : 0);
+  if (shut > 0.6) {
+    ctx.strokeStyle = INK; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+    for (const ex of [-10, 10]) { ctx.beginPath(); ctx.arc(ex, -7, 5.5, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke(); }
+  } else {
+    const ll = Math.hypot(b.look[0], b.look[1]);
+    const ox = ll ? (b.look[0] / ll) * 2.6 : 0, oy = ll ? (b.look[1] / ll) * 2.2 : 0;
+    for (const ex of [-10, 10]) {
+      ctx.save(); ctx.translate(ex, -5); ctx.scale(1, 1 - shut);
+      ell(0, 0, 7.5, 7.5); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 1.6; ctx.strokeStyle = INK; ctx.stroke();
+      ell(ox, oy, 3.8, 3.8); ctx.fillStyle = INK; ctx.fill();
+      ell(ox - 1.2, oy - 1.3, 1.3, 1.3); ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.restore();
+    }
+  }
+  if (b.sadBrows > 0) {
+    ctx.globalAlpha = b.alpha * b.sadBrows;
+    ctx.strokeStyle = INK; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-16, -14); ctx.lineTo(-5, -19); ctx.moveTo(16, -14); ctx.lineTo(5, -19); ctx.stroke();
+    ctx.globalAlpha = b.alpha;
+  }
+  drawMouth(b.mood);
+  if (b.flower) {
+    ctx.save(); ctx.translate(17, -24);
+    ctx.fillStyle = '#ff8fc4';
+    for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; ell(Math.cos(a) * 5, Math.sin(a) * 5, 4, 4); ctx.fill(); }
+    ell(0, 0, 3.5, 3.5); ctx.fillStyle = '#ffe066'; ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawBackground() {
+  const { w, h } = view, m = world.m;
+  // Night passes through a rose dawn on its way to the meadow, never through mud.
+  const sky = (a, b, c) => (m < 0.5 ? mixC(a, b, m * 2) : mixC(b, c, m * 2 - 1));
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, rgba(sky([20, 23, 42], [116, 92, 150], [255, 236, 196])));
+  g.addColorStop(0.55, rgba(sky([33, 38, 64], [214, 142, 160], [226, 243, 196])));
+  g.addColorStop(1, rgba(sky([43, 50, 80], [242, 182, 138], [150, 205, 118])));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+
+  if (m > 0.02) {
+    const sun = ctx.createRadialGradient(w * 0.5, h * 0.12, 0, w * 0.5, h * 0.12, Math.max(w, h) * 0.7);
+    sun.addColorStop(0, `rgba(255,251,230,${0.75 * m})`); sun.addColorStop(1, 'rgba(255,251,230,0)');
+    ctx.fillStyle = sun; ctx.fillRect(0, 0, w, h);
+    const u = view.k;
+    for (const d of meadow) {
+      const x = d.x * w, y = d.y * h;
+      ctx.globalAlpha = m * 0.85;
+      if (d.k < 0.6) { ell(x, y, 12 * u, 4.5 * u); ctx.fillStyle = '#a9d487'; }
+      else if (d.k < 0.88) { ell(x, y, 3.6 * u, 3.6 * u); ctx.fillStyle = d.c; }
+      else { ell(x, y, 8 * u, 4.6 * u); ctx.fillStyle = '#e3eecf'; }
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (world.spot > 0.01 && scene.hero) {
+    const x = bx(scene.hero), y = by(scene.hero) + 20 * view.k, r = 190 * view.k;
+    const sp = ctx.createRadialGradient(x, y, 0, x, y, r);
+    sp.addColorStop(0, `rgba(170,185,230,${0.2 * world.spot})`); sp.addColorStop(1, 'rgba(170,185,230,0)');
+    ctx.fillStyle = sp; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+}
+
+function drawRain() {
+  const a = world.rain * 0.32;
+  if (a < 0.01) return;
+  ctx.strokeStyle = `rgba(170,182,220,${a})`; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (const d of rain) {
+    const x = d.x * view.w, y = d.y * view.h, l = d.l * view.h;
+    ctx.moveTo(x, y); ctx.lineTo(x - l * 0.18, y + l);
+  }
+  ctx.stroke();
+}
+
+function drawMotes() {
+  const a = world.motes;
+  if (a < 0.01) return;
+  const t = clock.t;
+  for (const p of motes) {
+    const x = p.x * view.w + Math.sin(t / 900 + p.ph) * 14 * view.k, y = p.y * view.h;
+    ctx.save(); ctx.translate(x, y); ctx.scale(p.s * view.k * 0.9, p.s * view.k * 0.9);
+    ctx.rotate(t / 1500 + p.ph);
+    ctx.globalAlpha = a * (0.55 + 0.45 * Math.sin(t / 400 + p.ph));
+    ctx.fillStyle = rgba(p.c); ctx.fill(SPARKLE);
+    ctx.restore();
+  }
+}
+
+function drawMind() {
+  const a = world.mind;
+  if (a < 0.01) return;
+  const { w, h } = view;
+  ctx.fillStyle = `rgba(8,10,28,${0.5 * a})`; ctx.fillRect(0, 0, w, h);
+  const g = ctx.createRadialGradient(w / 2, h * 0.55, 0, w / 2, h * 0.55, Math.max(w, h) * 0.65);
+  g.addColorStop(0, `rgba(143,233,255,${0.1 * a})`); g.addColorStop(0.6, 'rgba(143,233,255,0)'); g.addColorStop(1, `rgba(0,0,10,${0.5 * a})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+}
+
+function drawPath() {
+  const show = world.pathShow;
+  if (show < 0.01 || !pathEnds()) return;
+  const s = world.path, t = clock.t;
+  const col = mixC(C.mind, C.yellow, world.pathGold);
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (let i = 0; i <= 48; i++) { const p = pathAt(i / 48); i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); }
+  ctx.shadowColor = rgba(col, 0.9); ctx.shadowBlur = 8 + 26 * s;
+  ctx.strokeStyle = rgba(col, show * (0.25 + 0.6 * s));
+  ctx.lineWidth = Math.max(1.5, (1.5 + 9 * s) * view.k);
+  ctx.setLineDash([Math.max(4, 14 * view.k * (1 - s * 0.7)), Math.max(4, 12 * view.k * (1 - s))]);
+  ctx.lineDashOffset = -t / 30;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // Signals running along the path, more of them as it strengthens.
+  const n = Math.round(1 + s * 7);
+  for (let i = 0; i < n; i++) {
+    const p = pathAt(((t / 1600 + i / n) % 1));
+    ell(p.x, p.y, (2 + 3 * s) * Math.max(view.k, 0.6), (2 + 3 * s) * Math.max(view.k, 0.6));
+    ctx.fillStyle = rgba([255, 255, 255], show * (0.5 + 0.5 * s)); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawFx() {
+  for (const r of world.rings) {
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.lineWidth = 4 * view.k * r.life + 1; ctx.strokeStyle = rgba(r.col, r.life * 0.8); ctx.stroke();
+  }
+  for (const hh of world.hearts) {
+    ctx.save(); ctx.translate(hh.x, hh.y); ctx.rotate(hh.rot); ctx.scale(hh.s, hh.s);
+    ctx.globalAlpha = Math.min(1, hh.life * 1.6);
+    ctx.fillStyle = '#ff6f91'; ctx.fill(HEART); ctx.lineWidth = 1.4; ctx.strokeStyle = '#c2406a'; ctx.stroke(HEART);
+    ctx.restore();
+  }
+  for (const s of world.sparks) {
+    ctx.save(); ctx.translate(s.x, s.y); ctx.scale(s.s, s.s); ctx.rotate(s.life * 3);
+    ctx.globalAlpha = Math.min(1, s.life * 1.5); ctx.fillStyle = rgba(s.col); ctx.fill(SPARKLE);
+    ctx.restore();
+  }
+  if (world.breathA > 0.01 && scene.hero) {
+    const x = bx(scene.hero), y = by(scene.hero), r = (60 + 90 * world.breath) * Math.max(view.k, 0.5);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.lineWidth = 3; ctx.strokeStyle = rgba(C.yellow, world.breathA * 0.8); ctx.stroke();
+    ctx.fillStyle = rgba(C.yellow, world.breathA * 0.08); ctx.fill();
+  }
+}
+
+function render() {
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+  drawBackground();
+  drawRain();
+  drawMind();
+  drawPath();
+  const list = world.blobs.slice().sort((a, b) => (a.ghost - b.ghost) || (by(a) - by(b)));
+  for (const b of list) drawBlob(b);
+  drawFx();
+  drawMotes();
+  for (const f of followers) placeFollower(f);
+}
+
+// ═══════════════════ kinetic type ═══════════════════
+
+/** Pin a DOM element to a stage point (fractions plus k offsets), kept inside a 12px margin. */
+function pin(el, fx, fy, ox = 0, oy = 0) {
+  el.classList.add('pos');
+  el._p = { fx, fy, ox, oy };
+  layer.append(el);
+  place(el);
+  return el;
+}
+function place(el) {
+  const p = el._p;
+  if (!p) return;
+  const hw = el.offsetWidth / 2, hh = el.offsetHeight / 2;
+  const x = hw * 2 > view.w - 24 ? view.w / 2 : clamp(sx(p.fx, p.ox), hw + 12, view.w - hw - 12);
+  const y = clamp(sy(p.fy, p.oy), hh + 12, view.h - hh - 12);
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+}
+
+/** Speech bubbles ride above their blob. */
+const followers = new Set();
+function placeFollower(f) {
+  const el = f.el, b = f.b;
+  const hw = el.offsetWidth / 2, hh = el.offsetHeight / 2;
+  el.style.left = clamp(bx(b), hw + 8, view.w - hw - 8) + 'px';
+  el.style.top = Math.max(hh + 8, by(b) - (44 + b.hop) * b.s * view.k - hh) + 'px';
+}
+
+/** Thoughts drift: down while heavy, up once they turn warm. */
+const drifters = new Set();
+function stepDrift(dt) {
+  for (const el of drifters) { el._p.oy += el._v * dt; place(el); }
+}
+
+function chars(text) {
+  return [...text].map((c) => {
+    const s = document.createElement('span');
+    s.className = 'ch';
+    s.textContent = c;
+    return s;
+  });
+}
+
+function makeText(text, cls, fx, fy, ox = 0, oy = 0) {
+  const wrap = document.createElement('div');
+  wrap.className = cls;
+  const line = document.createElement('span');
+  line.className = 'line';
+  line.append(...chars(text));
+  wrap.append(line);
+  pin(wrap, fx, fy, ox, oy);
+  return wrap;
+}
+
+function revealChars(wrap, { stagger = 34, dur = 700, dy = '0.45em', blur = 10 } = {}) {
+  const chs = wrap.querySelectorAll('.ch');
+  chs.forEach((c, i) => anim(c, [
+    { opacity: 0, transform: `translateY(${dy}) scale(0.9)`, filter: `blur(${blur}px)` },
+    { opacity: 1, transform: 'none', filter: 'blur(0px)' },
+  ], { duration: REDUCED ? 400 : dur, delay: REDUCED ? 0 : i * stagger }));
+  return wait((REDUCED ? 0 : chs.length * stagger) + dur);
+}
+
+async function fadeOut(el, dur = 600, extra = {}) {
+  anim(el, [{ opacity: 1 }, { opacity: 0, ...extra }], { duration: dur, easing: 'ease-in' });
+  await wait(dur);
+  el.remove();
+  drifters.delete(el);
+}
+
+const GLYPHS = 'abcdefghijkmnopqrstuvwxyz*+~';
+function glyph(i, t) { return GLYPHS[(i * 7 + Math.floor(t / 55) * 13) % GLYPHS.length]; }
+
+/**
+ * Letter morph: letters shared by both phrases fly to their new places,
+ * the rest fall away or condense out of a scramble. "I don't belong here" sheds "don't".
+ */
+async function morph(wrap, to, { dur = 1200, warm = false } = {}) {
+  const line = wrap.querySelector('.line');
+  const old = [...line.children];
+  const lr = layer.getBoundingClientRect();
+  const oldR = old.map((s) => s.getBoundingClientRect());
+  const ns = chars(to);
+  const nl = document.createElement('span');
+  nl.className = 'line';
+  nl.append(...ns);
+  line.replaceWith(nl);
+  if (warm) wrap.classList.add('warm');
+  place(wrap);
+  const fresh = [];
+  if (REDUCED) {
+    anim(nl, [{ opacity: 0 }, { opacity: 1 }], { duration: 500 });
+    await wait(500);
+    return fresh;
+  }
+  const newR = ns.map((s) => s.getBoundingClientRect());
+
+  const used = new Set(), match = new Array(ns.length).fill(-1);
+  ns.forEach((s, j) => {
+    const c = s.textContent.toLowerCase();
+    if (c === ' ') return;
+    let best = -1, bd = Infinity;
+    old.forEach((o, i) => {
+      if (used.has(i) || o.textContent.toLowerCase() !== c) return;
+      const d = Math.abs(i / old.length - j / ns.length);
+      if (d < bd) { bd = d; best = i; }
+    });
+    if (best >= 0 && bd < 0.5) { used.add(best); match[j] = best; }
+  });
+
+  // Letters that leave: clones at their old spots, dropping away.
+  const fly = document.createElement('div');
+  fly.className = wrap.className.replace('pos', '').trim();
+  Object.assign(fly.style, { position: 'absolute', left: '0', top: '0', width: '0', height: '0', whiteSpace: 'pre' });
+  layer.append(fly);
+  old.forEach((o, i) => {
+    if (used.has(i) || o.textContent === ' ') return;
+    const c = o.cloneNode(true);
+    Object.assign(c.style, { position: 'absolute', left: oldR[i].left - lr.left + 'px', top: oldR[i].top - lr.top + 'px' });
+    fly.append(c);
+    const dir = R() < 0.5 ? -1 : 1;
+    anim(c, [
+      { opacity: 1, transform: 'none', filter: 'blur(0px)' },
+      { opacity: 0, transform: `translate(${dir * 6}px, 0.9em) rotate(${dir * 25}deg) scale(0.7)`, filter: 'blur(5px)' },
+    ], { duration: dur * 0.55, delay: R() * 120, easing: 'cubic-bezier(.5,0,.8,.4)' });
+  });
+
+  ns.forEach((s, j) => {
+    const i = match[j];
+    if (i >= 0) {
+      const dx = oldR[i].left - newR[j].left, dy = oldR[i].top - newR[j].top;
+      anim(s, [
+        { transform: `translate(${dx}px, ${dy}px)`, color: 'inherit' },
+        { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - 14}px) scale(1.12)`, offset: 0.5 },
+        { transform: 'none' },
+      ], { duration: dur * 0.8, delay: 60 + j * 10, easing: 'cubic-bezier(.45,0,.2,1)' });
+    } else if (s.textContent !== ' ') {
+      fresh.push(s);
+      const real = s.textContent;
+      const at = dur * 0.35 + j * 22;
+      anim(s, [
+        { opacity: 0, transform: 'translateY(-0.7em) scale(0.3)', filter: 'blur(8px)' },
+        { opacity: 1, transform: 'none', filter: 'blur(0px)' },
+      ], { duration: 520, delay: at, easing: 'cubic-bezier(.2,1.4,.4,1)' });
+      fork(() => tick((t) => {
+        if (t >= at + 420) { s.textContent = real; return true; }
+        s.textContent = glyph(j, t);
+        return false;
+      }));
+    }
+  });
+  await wait(dur + ns.length * 22);
+  fly.remove();
+  return fresh;
+}
+
+/** Decode effect: random glyphs settle into the text from left to right. */
+function decode(el, text, dur = 650) {
+  const n = [...text].length;
+  return tick((t) => {
+    const p = REDUCED ? 1 : t / dur;
+    if (p >= 1) { el.textContent = text; return true; }
+    el.textContent = [...text].map((c, i) => (c === ' ' || i < p * n ? c : glyph(i, t))).join('');
+    return false;
+  });
+}
+
+/** Narration: words rise in one after another; the previous line lifts away first. */
+async function say(text) {
+  const cap = $('caption');
+  const oldW = [...cap.querySelectorAll('.w')];
+  if (oldW.length) {
+    oldW.forEach((w, i) => anim(w, [{ opacity: 1 }, { opacity: 0, transform: 'translateY(-0.35em)', filter: 'blur(4px)' }], { duration: 340, delay: i * 10 }));
+    await wait(360 + oldW.length * 10);
+  }
+  cap.replaceChildren();
+  if (!text) return;
+  const words = text.split(' ');
+  words.forEach((wd, i) => {
+    const s = document.createElement('span');
+    s.className = 'w';
+    s.textContent = wd;
+    cap.append(s, ' ');
+    anim(s, [{ opacity: 0, transform: 'translateY(0.5em)', filter: 'blur(6px)' }, { opacity: 1, transform: 'none', filter: 'blur(0px)' }], { duration: 620, delay: REDUCED ? 0 : i * 70 });
+  });
+  await wait(words.length * 70 + 620);
+}
+
+/** Speech bubble above a blob; resolves once it has popped in. */
+async function speak(b, text, { ghost = false, hold = 1300 } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pos';
+  const el = document.createElement('div');
+  el.className = 'bubble' + (ghost ? ' ghost' : '');
+  el.style.position = 'relative';
+  el.textContent = text;
+  wrap.append(el);
+  layer.append(wrap);
+  const f = { el: wrap, b };
+  followers.add(f);
+  placeFollower(f);
+  anim(el, [{ opacity: 0, transform: 'translateY(8px) scale(0.4)' }, { opacity: 1, transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.2,1.5,.4,1)' });
+  fork(async () => {
+    await wait(hold);
+    await fadeOut(wrap, 300);
+    followers.delete(f);
+  });
+  await wait(420);
+}
+
+function bump(el, text) {
+  el.textContent = text;
+  anim(el, [{ transform: 'scale(1.35)' }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.2,1.6,.4,1)' });
+}
+
+/** Text colour follows the light: pale on night, ink on meadow. */
+let lightText = null;
+function syncTextTone() {
+  const light = world.m < 0.5;
+  if (light === lightText) return;
+  lightText = light;
+  stage.style.setProperty('--text', light ? '#ecebf6' : '#3b2633');
+  stage.style.setProperty('--halo', light ? 'rgba(20,22,44,0.75)' : 'rgba(255,250,236,0.85)');
+  stage.style.setProperty('--thought', light ? '#a9b1cf' : '#6b5a68');
+  stage.style.setProperty('--gold', light ? '#ffd34d' : '#d9860b');
+  stage.style.setProperty('--rose', light ? '#ff7eb6' : '#d63f7c');
+}
+
+// ═══════════════════ choreography helpers ═══════════════════
+
+function jump(b, amp = 14, dur = 440) {
+  return (async () => { await tween(b, { hop: amp }, dur * 0.45, E.out); await tween(b, { hop: 0 }, dur * 0.55, E.in); })();
+}
+function lookAt(a, b) { a.look = [bx(b) - bx(a), by(b) - by(a)]; }
+
+/** Walk to a stage point with a hopping gait. */
+function walkTo(b, to, dur, amp = 8, gait = 200) {
+  const from = { fx: b.fx, fy: b.fy, ox: b.ox, oy: b.oy };
+  const tgt = { ox: 0, oy: 0, ...to };
+  return tick((t) => {
+    const p = Math.min(1, t / dur), e = E.inOut(p);
+    for (const k in from) b[k] = lerp(from[k], tgt[k], e);
+    b.hop = p < 1 ? Math.abs(Math.sin((t / gait) * Math.PI)) * amp : 0;
+    return p >= 1;
+  });
+}
+
+/** Follow the rehearsed path (blob centre rides 22k above it). */
+function walkPath(b, dur, amp, gait = 200, trail = false) {
+  let lastSpark = 0;
+  return tick((t) => {
+    const p = Math.min(1, t / dur), pt = pathAt(E.inOut(p));
+    b.fx = pt.x / view.w; b.fy = pt.y / view.h; b.ox = 0; b.oy = -22;
+    b.hop = p < 1 ? Math.abs(Math.sin((t / gait) * Math.PI)) * amp : 0;
+    if (trail && t - lastSpark > 90) { lastSpark = t; sparkleAt(pt.x, pt.y, 2, C.yellow); }
+    return p >= 1;
+  });
+}
+const PATH_END = { fx: 0.74, fy: 0.62, ox: -165, oy: 0 };
+
+function showHud(id, on) {
+  const el = $(id);
+  if (on) { el.hidden = false; anim(el, [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: 500 }); }
+  else fork(async () => { anim(el, [{ opacity: 1 }, { opacity: 0 }], { duration: 400 }); await wait(400); el.hidden = true; });
+}
+
+let smiles = 0;
+function addSmile() { smiles++; bump($('smile-count'), String(smiles)); }
+
+async function convert(src, dst, i) {
+  lookAt(src, dst); lookAt(dst, src);
+  setMood(dst, 'ohh');
+  await wait(260);
+  setMood(dst, i % 3 === 0 ? 'grin' : 'smile');
+  recolor(dst, JOY[i % JOY.length], 700);
+  fork(() => tween(dst, { blush: 1 }, 600));
+  dst.joy = true;
+  burst(dst, JOY[i % JOY.length], 3);
+  jump(dst, 12);
+  audio.chime(4 + (i % 9), { vol: 0.07, dur: 1.6 });
+  addSmile();
+}
+
+// ═══════════════════ the cast ═══════════════════
+
+// Kept above the narration band (bottom fifth of the screen).
+const CROWD = [[0.08, 0.77], [0.33, 0.79], [0.55, 0.78], [0.93, 0.77], [0.1, 0.42], [0.4, 0.44], [0.62, 0.41], [0.9, 0.43],
+  [0.05, 0.6], [0.45, 0.68], [0.96, 0.6], [0.22, 0.7], [0.7, 0.79], [0.84, 0.69]];
+
+function setupCast() {
+  world.blobs = []; world.rings = []; world.hearts = []; world.sparks = [];
+  Object.assign(world, { m: 0, mind: 0, rain: 0, motes: 0, spot: 0, path: 0, pathGold: 0, pathShow: 0, breath: 0, breathA: 0 });
+  followers.clear(); drifters.clear();
+  $('caption').replaceChildren();
+  ['rehearsal-tag', 'smile-tag', 'end', 'pick', 'guide'].forEach((id) => ($(id).hidden = true));
+  const hero = makeBlob({ fx: 0.2, fy: 0.62, s: 1.9, col: C.sad, mood: 'frown', sadBrows: 1, look: [0.2, 1] });
+  const G = [[-60, -28], [22, -52], [70, 12], [-8, 40]].map(([ox, oy], i) =>
+    makeBlob({ fx: 0.74, fy: 0.62, ox, oy, s: 1.4, col: C.grey, mood: i % 2 ? 'smile' : 'flat' }));
+  G.forEach((g, i) => lookAt(g, G[(i + 1) % G.length]));
+  const crowd = CROWD.map(([fx, fy]) => makeBlob({ fx: fx < 0.5 ? -0.1 : 1.1, fy, s: 1.15, col: C.grey, mood: 'flat', home: [fx, fy] }));
+  scene.hero = hero; scene.group = G; scene.crowd = crowd; scene.thoughts = [];
+  world.blobs.push(...crowd, ...G, hero);
+  smiles = 0;
+}
+
+/** The group keeps chatting among themselves while the hero hangs back. */
+function chatter(until) {
+  let next = 0, i = 0;
+  return tick((t) => {
+    if (until()) return true;
+    if (t > next) { const g = scene.group[i++ % 4]; if (!g.joy) jump(g, 6, 360); next = t + 700 + R() * 600; }
+    return false;
+  });
+}
+
+// ═══════════════════ the film ═══════════════════
+
+const TOTAL = 96000;
+let mode = 'story', storyStart = 0, guideStep = 0;
+
+async function story() {
+  setupCast();
+  mode = 'story';
+  storyStart = clock.t;
+  const hero = scene.hero, G = scene.group;
+  let chatting = true;
+  fork(() => chatter(() => !chatting));
+
+  // ── Title
+  fork(() => tween(world, { rain: 1, spot: 1 }, 3500));
+  audio.sigh();
+  const title = makeText('The Joy Rehearsal', 'title', 0.5, 0.28);
+  const sub = makeText('a short film about mental rehearsal', 'subtitle', 0.5, 0.37);
+  await revealChars(title, { stagger: 45, dur: 900 });
+  await revealChars(sub, { stagger: 12, dur: 600 });
+  await wait(1600);
+  fadeOut(title, 700, { filter: 'blur(8px)' }); fadeOut(sub, 700);
+  await wait(500);
+
+  // ── The heavy room
+  fork(() => tween(hero, { sq: -0.05 }, 1200));
+  await say('Some rooms feel impossible to walk into.');
+  const T = [['what if they stare?', 0.24, 0.27], ["I'll say something wrong", 0.32, 0.36], ["I don't belong here", 0.2, 0.45]];
+  for (const [txt, fx, fy] of T) {
+    const el = makeText(txt, 'thought', fx, fy);
+    el._v = 0.0016; drifters.add(el); scene.thoughts.push(el);
+    revealChars(el, { stagger: 26, dur: 800 });
+    audio.note(174.6, { dur: 2.4, vol: 0.05, type: 'triangle' });
+    await wait(1500);
+  }
+  await wait(900);
+
+  // ── Close your eyes
+  await say('So you rehearse it first, in your mind.');
+  fork(() => tween(hero, { closed: 1, sq: 0 }, 800));
+  hero.look = [0, 0];
+  fork(() => tween(world, { mind: 1, rain: 0.35, spot: 0.4, pathShow: 1, path: 0.05 }, 1600));
+  showHud('rehearsal-tag', true);
+  await wait(1400);
+
+  // ── Rehearsals: the ghost runs the scene, steadier every time
+  const ghost = makeBlob({ ghost: true, s: 1.75, col: C.mind, alpha: 0, mood: 'frown', sadBrows: 1, look: [1, 0] });
+  world.blobs.push(ghost);
+  const REPS = 7;
+  const lines = { 1: 'The first run is shaky.', 3: 'Each run makes the path easier to walk.', 5: 'Athletes and performers rehearse like this. Anyone can.' };
+  const hellos = ['um… hi?', 'h-hello', 'hi!', 'hi there!', 'hey, how’s it going?', 'hi! mind if I join?', 'hi! mind if I join?'];
+  const morphs = {
+    2: [0, 'what if they smile?'],
+    3: [1, "I'll say something warm"],
+    4: [2, 'I belong here'],
+  };
+  for (let i = 1; i <= REPS; i++) {
+    const c = i / REPS;
+    bump($('rep-count'), String(i));
+    ghost.conf = c;
+    ghost.mood = c < 0.3 ? 'frown' : c < 0.55 ? 'flat' : c < 0.8 ? 'smile' : 'grin';
+    ghost.sadBrows = c < 0.3 ? 1 : 0;
+    ghost.blush = c > 0.6 ? 1 : 0;
+    const p0 = pathAt(0);
+    Object.assign(ghost, { fx: p0.x / view.w, fy: p0.y / view.h, ox: 0, oy: -22 });
+    fork(() => tween(ghost, { alpha: 0.45 + 0.5 * c }, 300));
+    if (lines[i]) fork(() => say(lines[i]));
+    if (morphs[i]) {
+      const [k, to] = morphs[i], el = scene.thoughts[k];
+      fork(async () => { await wait(500); el._v = -0.004; await morph(el, to, { warm: true }); audio.chime(i + 3, { vol: 0.06 }); });
+    }
+    const dur = lerp(2700, 1000, (i - 1) / (REPS - 1));
+    fork(() => tween(world, { path: c }, dur, E.out));
+    await walkPath(ghost, dur, 3 + 10 * c, c < 0.4 ? 280 : 180);
+    audio.chime(i - 1, { vol: 0.08 });
+    await speak(ghost, hellos[i - 1], { ghost: true, hold: i < REPS ? 650 : 1100 });
+    if (i >= 4) { lookAt(G[0], ghost); setMood(G[0], 'smile'); }
+    await wait(i < REPS ? 450 : 1100);
+    await tween(ghost, { alpha: 0 }, 260);
+  }
+  world.blobs.splice(world.blobs.indexOf(ghost), 1);
+
+  // ── Transformation: eyes open, colour comes in, words turn
+  chatting = false;
+  showHud('rehearsal-tag', false);
+  fork(() => tween(world, { mind: 0, rain: 0, spot: 0, motes: 0.45 }, 1800));
+  fork(() => tween(hero, { closed: 0, sadBrows: 0, blush: 1 }, 700));
+  hero.look = [1, -0.2];
+  setMood(hero, 'smile');
+  recolor(hero, C.blue, 1500);
+  jump(hero, 16, 520);
+  audio.bloom();
+  for (const el of scene.thoughts) {
+    const r = el.getBoundingClientRect(), lr = layer.getBoundingClientRect();
+    sparkleAt(r.left + r.width / 2 - lr.left, r.top + r.height / 2 - lr.top, 10, C.yellow);
+    fadeOut(el, 800, { filter: 'blur(6px)' });
+  }
+  const big = makeText('SADNESS', 'big', 0.5, 0.2);
+  await revealChars(big, { stagger: 50 });
+  await wait(700);
+  let fresh = await morph(big, 'GLADNESS', { dur: 1300 });
+  fresh.forEach((s) => s.classList.add('lit'));
+  audio.chime(7, { vol: 0.08 });
+  await say('The feeling shifts before the moment arrives.');
+  await wait(1100);
+  fresh = await morph(big, 'BOLDNESS', { dur: 1300 });
+  fresh.forEach((s) => s.classList.add('lit'));
+  audio.chime(9, { vol: 0.08 });
+  await say('Gladness you’ve practised turns into courage you can use.');
+  await wait(1800);
+  fadeOut(big, 600, { filter: 'blur(8px)' });
+
+  // ── The real walk, along the path it already knows
+  fork(() => tween(world, { pathGold: 1 }, 900));
+  await say('Now the real walk feels like the hundredth time.');
+  await walkPath(hero, 2600, 11, 190, true);
+  Object.assign(hero, PATH_END);
+  fork(() => tween(world, { pathShow: 0 }, 1200));
+  lookAt(hero, G[0]);
+  await speak(hero, 'Hi! Mind if I join you?', { hold: 1900 });
+  await wait(500);
+  showHud('smile-tag', true);
+  smiles = 0; addSmile();
+  await convert(hero, G[0], 0);
+  await wait(900);
+
+  // ── Joy spreads, blob to blob
+  fork(() => tween(world, { m: 1, motes: 1 }, 9000, E.sine));
+  say('Joy is contagious.');
+  scene.crowd.forEach((b, i) => fork(async () => { await wait(i * 160); await walkTo(b, { fx: b.home[0], fy: b.home[1] }, 1900, 7); }));
+  const lit = [hero, G[0]];
+  const dark = [...G.slice(1), ...scene.crowd];
+  let n = 1;
+  fork(async () => {
+    await wait(1600);
+    const word = makeText('alone', 'big', 0.5, 0.2);
+    await revealChars(word, { stagger: 60 });
+    await wait(600);
+    fresh = await morph(word, 'among friends', { dur: 1400 });
+    fresh.forEach((s) => s.classList.add('lit'));
+    await wait(2600);
+    fadeOut(word, 600, { filter: 'blur(8px)' });
+  });
+  let frontier = [G[0]];
+  while (dark.length) {
+    const next = [];
+    for (const src of frontier.length ? frontier : lit) {
+      for (let j = 0; j < 2 && dark.length; j++) {
+        dark.sort((a, b) => Math.hypot(bx(a) - bx(src), by(a) - by(src)) - Math.hypot(bx(b) - bx(src), by(b) - by(src)));
+        const dst = dark.shift();
+        fork(() => convert(src, dst, n++));
+        next.push(dst);
+      }
+    }
+    lit.push(...next);
+    frontier = next;
+    await wait(620);
+  }
+  await wait(600);
+  await say('One brave hello can warm up a whole room.');
+  await wait(1800);
+  await say('And everyone carries it into the next room.');
+  await wait(2000);
+
+  // ── Comfortable anywhere
+  showHud('smile-tag', false);
+  say('');
+  const others = world.blobs.filter((b) => b !== hero);
+  const rx = Math.min((0.42 * view.w) / view.k, 330), ry = 120;
+  others.forEach((b, i) => {
+    const a = (i / others.length) * Math.PI * 2;
+    fork(() => walkTo(b, { fx: 0.5, fy: 0.64, ox: Math.cos(a) * rx, oy: Math.sin(a) * ry }, 1700, 6));
+  });
+  fork(() => walkTo(hero, { fx: 0.5, fy: 0.6 }, 1700, 9));
+  await wait(1500);
+  const sit = document.createElement('div');
+  sit.className = 'situation';
+  sit.innerHTML = '<span class="lead"></span><span class="slot"></span>';
+  pin(sit, 0.5, 0.22);
+  const lead = sit.querySelector('.lead'), slot = sit.querySelector('.slot');
+  await decode(lead, 'Rehearse it, and you can feel at ease', 800);
+  fork(() => say('The ease you rehearse goes wherever you go.'));
+  const places = ['at a party', 'in a job interview', 'on a first date', 'on a stage', 'in a new city', 'anywhere.'];
+  for (let i = 0; i < places.length; i++) {
+    hero.flower = places[i] === 'on a first date' || places[i] === 'anywhere.';
+    hero.wave = places[i] === 'on a stage' ? 1 : 0;
+    setMood(hero, i % 2 ? 'grin' : 'smile');
+    jump(hero, 14);
+    others.forEach((b, j) => fork(async () => { await wait(j * 25); await jump(b, 8, 380); }));
+    audio.chime(5 + i, { vol: 0.07 });
+    await decode(slot, places[i], 600);
+    place(sit);
+    await wait(i === places.length - 1 ? 2200 : 1300);
+  }
+  hero.wave = 0;
+  fadeOut(sit, 700, { filter: 'blur(8px)' });
+
+  // ── Finale: a heart of friends
+  say('');
+  others.forEach((b, i) => {
+    // Start at the tip; the blob at the top notch sits a little higher so it clears the hero.
+    const t = Math.PI + (i / others.length) * Math.PI * 2;
+    const notch = i === others.length / 2 ? 1.6 : 0;
+    const x = 16 * Math.sin(t) ** 3, y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) - notch;
+    fork(() => tween(b, { s: 1 }, 1900));
+    fork(() => walkTo(b, { fx: 0.5, fy: 0.5, ox: x * 15, oy: y * 15 }, 1900, 6));
+  });
+  fork(() => tween(hero, { s: 1.6 }, 1900));
+  fork(() => walkTo(hero, { fx: 0.5, fy: 0.5, oy: 22 }, 1900, 8));
+  await wait(2100);
+  audio.bloom();
+  burst(hero, C.yellow, 8);
+  setMood(hero, 'grin');
+  jump(hero, 20, 560);
+  const end = makeText('Rehearse the joy.', 'big', 0.5, 0.13);
+  await revealChars(end, { stagger: 45, dur: 900 });
+  const end2 = makeText('Then go and share it.', 'big2', 0.5, 0.13);
+  end2.style.marginTop = 'clamp(46px, 8vw, 92px)';
+  await revealChars(end2, { stagger: 28, dur: 700 });
+  await wait(900);
+  showPanel('end');
+  storyStart = clock.t - TOTAL;
+  fork(() => tick(() => { if (R() < 0.01) jump(world.blobs[(R() * world.blobs.length) | 0], 10); return mode !== 'story'; }));
+}
+
+// ═══════════════════ guided rehearsal: the viewer's turn ═══════════════════
+
+const SITS = [
+  { label: 'A party', place: 'the party', sense: 'Hear the music and the chatter.' },
+  { label: 'A job interview', place: 'the interview room', sense: 'Notice the chairs, the table, the light.' },
+  { label: 'A first date', place: 'the café', sense: 'Smell the coffee. See the warm light.' },
+  { label: 'A stage', place: 'the stage', sense: 'Feel the floor steady under your feet.' },
+  { label: 'A new city', place: 'a new street', sense: 'Hear the sounds of a place you are getting to know.' },
+];
+let sitIdx = 0;
+
+function buildChips() {
+  $('chips').replaceChildren(...SITS.map((s, i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'pill chip'; b.id = 'sit-' + i;
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(i === sitIdx));
+    b.textContent = s.label;
+    b.onclick = () => { sitIdx = i; buildChips(); $('sit-' + i).focus(); };
+    return b;
+  }));
+}
+
+function showPanel(id) {
+  const el = $(id);
+  el.hidden = false;
+  anim(el, [{ opacity: 0, transform: 'translate(-50%, 10px)' }, { opacity: 1, transform: 'translate(-50%, 0)' }], { duration: 500 });
+}
+
+async function guided() {
+  const sit = SITS[sitIdx];
+  setupCast();
+  mode = 'guide'; guideStep = 0;
+  const hero = scene.hero, G = scene.group;
+  Object.assign(hero, { from: C.blue, to: C.blue, cm: 1, mood: 'smile', sadBrows: 0, closed: 1, blush: 0.6, look: [0, 0] });
+  Object.assign(world, { m: 0.35, mind: 0.75, motes: 0.3 });
+  const steps = [
+    'Breathe in slowly… and out.',
+    `Picture ${sit.place}. ${sit.sense}`,
+    'See yourself walk in. Shoulders easy, steps steady.',
+    'Hear yourself say a warm hello.',
+    'Watch them smile back.',
+    'Feel that ease in your chest. Let it settle.',
+    'Run it once more, a little brighter.',
+    'You’ve walked this path before. Next time, it will feel familiar.',
+  ];
+  $('steps').replaceChildren(...steps.map(() => document.createElement('i')));
+  showPanel('guide');
+  const mark = (i) => { guideStep = i; [...$('steps').children].forEach((el, j) => el.classList.toggle('on', j <= i)); };
+  const ghost = makeBlob({ ghost: true, s: 1.75, col: C.mind, alpha: 0, mood: 'smile', conf: 0.8, blush: 1, look: [1, 0] });
+  world.blobs.push(ghost);
+
+  // Breathe: the ring grows for four seconds, shrinks for four.
+  mark(0);
+  fork(() => say(steps[0]));
+  await tween(world, { breathA: 1 }, 600);
+  await Promise.all([tween(world, { breath: 1 }, 4000, E.sine), tween(hero, { s: 2.05 }, 4000, E.sine)]);
+  await Promise.all([tween(world, { breath: 0 }, 4000, E.sine), tween(hero, { s: 1.9 }, 4000, E.sine)]);
+  fork(() => tween(world, { breathA: 0 }, 600));
+
+  mark(1);
+  fork(() => tween(world, { pathShow: 0.8, path: 0.35 }, 1500));
+  await say(steps[1]);
+  await wait(3600);
+
+  mark(2);
+  fork(() => say(steps[2]));
+  const p0 = pathAt(0);
+  Object.assign(ghost, { fx: p0.x / view.w, fy: p0.y / view.h, ox: 0, oy: -22 });
+  await tween(ghost, { alpha: 0.85 }, 400);
+  fork(() => tween(world, { path: 0.7 }, 3000));
+  await walkPath(ghost, 3200, 9, 230);
+  await wait(900);
+
+  mark(3);
+  await say(steps[3]);
+  audio.chime(5, { vol: 0.08 });
+  await speak(ghost, 'Hi! Lovely to meet you.', { ghost: true, hold: 2400 });
+  await wait(2200);
+
+  mark(4);
+  await say(steps[4]);
+  for (let i = 0; i < G.length; i++) { fork(() => convert(i ? G[i - 1] : ghost, G[i], i + 1)); await wait(450); }
+  await wait(2400);
+
+  mark(5);
+  await say(steps[5]);
+  fork(() => tween(world, { m: 0.8, mind: 0.3, motes: 0.8 }, 3000));
+  burst(hero, C.yellow, 5);
+  fork(() => tween(hero, { blush: 1 }, 1200));
+  await wait(4200);
+
+  mark(6);
+  await say(steps[6]);
+  await tween(ghost, { alpha: 0 }, 300);
+  const q0 = pathAt(0);
+  Object.assign(ghost, { fx: q0.x / view.w, fy: q0.y / view.h, ox: 0, oy: -22, mood: 'grin' });
+  await tween(ghost, { alpha: 0.95 }, 300);
+  fork(() => tween(world, { path: 1, pathGold: 1 }, 1600));
+  await walkPath(ghost, 1700, 13, 170, true);
+  G.forEach((g) => jump(g, 10));
+  audio.bloom();
+  await wait(1500);
+
+  mark(7);
+  fork(() => tween(world, { m: 1, mind: 0, motes: 1 }, 2000));
+  await tween(ghost, { alpha: 0 }, 400);
+  fork(() => tween(hero, { closed: 0 }, 600));
+  hero.look = [1, -0.2];
+  setMood(hero, 'grin');
+  jump(hero, 18, 520);
+  await say(steps[7]);
+  await wait(2400);
+  $('guide').hidden = true;
+  await say('');
+  const done = makeText('Rehearsal complete', 'big2', 0.5, 0.2);
+  revealChars(done, { stagger: 30 });
+  showPanel('end');
+}
+
+// ═══════════════════ frame loop, controls, boot ═══════════════════
+
+function resize() {
+  const r = stage.getBoundingClientRect();
+  view.w = Math.max(1, r.width); view.h = Math.max(1, r.height);
+  view.dpr = Math.min(2, window.devicePixelRatio || 1);
+  view.k = Math.min(view.w / 1000, view.h / 760);
+  cv.width = Math.round(view.w * view.dpr); cv.height = Math.round(view.h * view.dpr);
+  for (const el of layer.querySelectorAll('.pos')) place(el);
+}
+
+function frame(now) {
+  const dt = Math.min(50, now - clock.last) * SPEED;
+  clock.last = now;
+  if (!clock.paused) {
+    clock.t += dt;
+    stepEngine();
+    stepWorld(dt);
+    stepDrift(dt);
+  }
+  syncTextTone();
+  render();
+  const p = mode === 'story' ? (clock.t - storyStart) / TOTAL : (guideStep + 1) / 8;
+  $('progress').firstElementChild.style.width = clamp(p, 0, 1) * 100 + '%';
+  requestAnimationFrame(frame);
+}
+
+function start(fn) {
+  abortAll();
+  setPaused(false);
+  fork(fn);
+}
+
+$('pause').onclick = () => setPaused(!clock.paused);
+$('restart').onclick = () => start(story);
+$('again').onclick = () => start(story);
+$('try').onclick = () => { setPaused(false); $('end').hidden = true; buildChips(); showPanel('pick'); $('sit-' + sitIdx).focus(); };
+$('begin').onclick = () => start(guided);
+$('sound').onclick = () => {
+  const on = audio.on ? (audio.on = false) : audio.enable();
+  $('sound').setAttribute('aria-pressed', String(!!on));
+  $('sound-lbl').textContent = on ? 'Sound on' : 'Sound off';
+  $('wave').setAttribute('opacity', on ? '1' : '0.3');
+  if (on) audio.chime(4, { vol: 0.06 });
+};
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !e.target.closest?.('button')) { e.preventDefault(); setPaused(!clock.paused); }
+});
+let autoPaused = false;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && !clock.paused) { autoPaused = true; setPaused(true); }
+  else if (!document.hidden && autoPaused) { autoPaused = false; setPaused(false); }
+});
+
+resize();
+addEventListener('resize', resize);
+requestAnimationFrame((t) => { clock.last = t; frame(t); });
+Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 1500))]).then(() => start(story));
+</script>
